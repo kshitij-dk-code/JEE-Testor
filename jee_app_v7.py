@@ -202,6 +202,39 @@ def mark_visited():
             st.session_state.status[q_id] = 'not_answered'
     except: pass
 
+# THE NEW GRADING ENGINE (JEE Advanced Logic)
+def calculate_score(q_type, user_ans, correct_key, pos_marks, neg_marks):
+    if not user_ans: return 0, 0
+    
+    u_ans = str(user_ans).strip()
+    c_key = str(correct_key).strip()
+    
+    if q_type == 'Multi-Correct':
+        u_set = set(u_ans.split(',')) if u_ans else set()
+        k_set = set(c_key.split(',')) if c_key else set()
+        
+        if not u_set: return 0, 0
+        # Condition 1: Any wrong option chosen triggers the -2 penalty
+        if not u_set.issubset(k_set):
+            return -2, 0
+        # Condition 2: All correct options chosen gets full +4
+        elif u_set == k_set:
+            return 4, 1
+        # Condition 3: Partial correct options chosen gets +1 per option
+        else:
+            return len(u_set), 0
+            
+    elif q_type in ['Numerical', 'Integer']:
+        try:
+            if float(u_ans) == float(c_key): return pos_marks, 1
+            else: return -neg_marks, 0
+        except:
+            if u_ans == c_key: return pos_marks, 1
+            else: return -neg_marks, 0
+    else: 
+        if u_ans == c_key: return pos_marks, 1
+        else: return -neg_marks, 0
+
 def submit_test_initial():
     conn = sqlite3.connect(st.session_state.selected_paper, timeout=10)
     c = conn.cursor()
@@ -214,43 +247,16 @@ def submit_test_initial():
         ans = st.session_state.responses.get(q_id, "")
         t_spent = int(st.session_state.timers.get(q_id, 0))
         q_row = df_q[df_q['id'] == q_id].iloc[0]
-        score = 0; is_correct = 0
         
-        if ans:
-            c_key = str(q_row['correct_option']).strip()
-            ans_str = str(ans).strip()
-            q_type = q_row['question_type']
-            
-            if q_type == 'Multi-Correct':
-                u_set = set(ans_str.split(',')) if ans_str else set()
-                k_set = set(c_key.split(',')) if c_key else set()
-                if u_set == k_set and len(u_set) > 0:
-                    score = q_row['marks_pos']; is_correct = 1
-                elif u_set.issubset(k_set) and len(u_set) > 0: score = len(u_set) 
-                else: score = -q_row['marks_neg']
-            elif q_type in ['Numerical', 'Integer']:
-                try:
-                    if float(ans_str) == float(c_key):
-                        score = q_row['marks_pos']; is_correct = 1
-                    else: score = -q_row['marks_neg']
-                except:
-                    if ans_str == c_key:
-                        score = q_row['marks_pos']; is_correct = 1
-                    else: score = -q_row['marks_neg']
-            else: 
-                if ans_str == c_key:
-                    score = q_row['marks_pos']; is_correct = 1
-                else: score = -q_row['marks_neg']
+        # Pass to the new grading engine
+        score, is_correct = calculate_score(q_row['question_type'], ans, q_row['correct_option'], q_row['marks_pos'], q_row['marks_neg'])
 
-        # THE FIX: manual_review_done is set to 1 immediately so it goes to analytics.
-        # Default category is "Pending Review"
         c.execute("""INSERT INTO responses 
                      (session_id, timestamp, question_id, user_answer, time_taken_sec, is_correct, score_awarded, category, manual_review_done) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending Review', 1)""", 
                   (session_id, datetime.now(), q_id, str(ans), t_spent, is_correct, int(score)))
     conn.commit(); conn.close()
     
-    # Bypass categorization, go straight to analytics
     change_phase('analytics')
 
 
@@ -304,9 +310,24 @@ def render_home():
     st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Your personal simulator and tutor.</p>', unsafe_allow_html=True)
     
+    # --- WEB UPLOADER ---
+    with st.expander("📤 Upload Question Paper (.db)"):
+        st.info("Drag and drop a .db paper file from your local PC to add it to your workspace.")
+        uploaded_file = st.file_uploader("Upload Database File", type=['db'], label_visibility="collapsed")
+        
+        if uploaded_file is not None:
+            save_path = os.path.join(get_user_folder(), uploaded_file.name)
+            with open(save_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            st.success(f"Successfully uploaded: {uploaded_file.name}!")
+            time.sleep(1)
+            st.rerun()
+            
+    st.markdown("---")
+    
     papers = get_available_papers()
     if not papers: 
-        st.warning("No question papers found in your workspace. Run your uploader!")
+        st.warning("No question papers found in your workspace. Upload one above!")
         return
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -315,9 +336,31 @@ def render_home():
         selected = st.selectbox("Select Question Paper:", papers, format_func=lambda x: paper_names[x])
         
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Proceed to Instructions", type="primary", use_container_width=True):
-            st.session_state.selected_paper = selected
-            change_phase('instructions')
+        
+        # --- ACTION BUTTONS (Start, Download, Delete) ---
+        c_start, c_down = st.columns(2)
+        with c_start:
+            if st.button("Proceed to Instructions", type="primary", use_container_width=True):
+                st.session_state.selected_paper = selected
+                change_phase('instructions')
+                
+        with c_down:
+            # Read the DB file into bytes for the download button
+            with open(selected, "rb") as f:
+                db_bytes = f.read()
+            st.download_button(
+                label="💾 Download Paper Data",
+                data=db_bytes,
+                file_name=os.path.basename(selected),
+                mime="application/octet-stream",
+                use_container_width=True
+            )
+            
+        if st.button("🗑️ Delete Paper from Cloud", use_container_width=True):
+            os.remove(selected)
+            st.success("Deleted from server!")
+            time.sleep(1)
+            st.rerun()
 
 def render_instructions():
     st.title("📄 Paper Instructions")
@@ -500,8 +543,8 @@ def question_editor():
     conn.close()
 
 def render_review_browser():
-    st.title("📖 Paper Review Mode")
-    st.info("Study your attempt. You can categorize your mistakes here anytime.")
+    st.title("📖 Paper Review & Live Editor")
+    st.info("Categorize mistakes or fix database errors. Changes to the Official Key will instantly re-evaluate your score!")
     
     if st.button("⬅️ Back to Analytics"): change_phase('analytics')
     
@@ -523,9 +566,11 @@ def render_review_browser():
     
     status_col = "#28a745" if r['is_correct'] else "#dc3545"
     if not r['user_answer']: status_col = "#6c757d"
+    
+    # Render the dynamic score banner
     st.markdown(f"""
     <div style="background-color: {status_col}; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
-        <strong>Q{st.session_state.rev_idx + 1} ({r['subject']} - {r['chapter']})</strong> | 
+        <strong>Q{st.session_state.rev_idx + 1} ({r['question_type']})</strong> | 
         Score: {r['score_awarded']} | Time Spent: {r['time_taken_sec']}s
     </div>
     """, unsafe_allow_html=True)
@@ -542,20 +587,43 @@ def render_review_browser():
             if r['option_b_img']: st.image(r['option_b_img'], caption="B")
             if r['option_d_img']: st.image(r['option_d_img'], caption="D")
     
-    c_ans, c_key = st.columns(2)
-    c_ans.metric("Your Answer", r['user_answer'] if r['user_answer'] else "Skipped")
-    c_key.metric("Official Key", r['correct_option'])
+    st.metric("Your Answer", r['user_answer'] if r['user_answer'] else "Skipped")
     
     st.markdown("---")
-    st.write("### Tag Error Category")
-    options = ["Pending Review", "Perfect", "Silly Mistake", "Conceptual Error", "Time Pressure", "Skipped", "Guessed"]
-    current_cat = r['category'] if r['category'] in options else "Pending Review"
+    st.write("### 🛠️ Live Adjustments")
     
-    new_cat = st.selectbox("Update Mistake Type:", options, index=options.index(current_cat), key=f"rev_cat_{r['rid']}")
-    if st.button("Save Tag", type="primary"):
+    # The Integrated Post-Test Editor
+    c_sub, c_chap, c_key, c_tag = st.columns(4)
+    
+    sub_opts = ["Physics", "Chemistry", "Mathematics", "Uncategorized"]
+    curr_sub_idx = sub_opts.index(r['subject']) if r['subject'] in sub_opts else 3
+    new_sub = c_sub.selectbox("Subject", sub_opts, index=curr_sub_idx, key=f"rev_sub_{r['rid']}")
+    
+    new_chap = c_chap.text_input("Chapter", value=r['chapter'], key=f"rev_chap_{r['rid']}")
+    new_key = c_key.text_input("Official Key", value=r['correct_option'], key=f"rev_key_{r['rid']}")
+    
+    cat_opts = ["Pending Review", "Perfect", "Silly Mistake", "Conceptual Error", "Time Pressure", "Skipped", "Guessed"]
+    curr_cat = r['category'] if r['category'] in cat_opts else "Pending Review"
+    new_cat = c_tag.selectbox("Mistake Type", cat_opts, index=cat_opts.index(curr_cat), key=f"rev_cat_{r['rid']}")
+    
+    if st.button("Save & Re-Evaluate", type="primary"):
         c = conn.cursor()
-        c.execute("UPDATE responses SET category=? WHERE id=?", (new_cat, r['rid']))
-        conn.commit(); st.success("Tag Saved!"); time.sleep(0.5); st.rerun()
+        
+        # 1. Recalculate the score using the new key
+        new_score, new_is_correct = calculate_score(r['question_type'], r['user_answer'], new_key, r['marks_pos'], r['marks_neg'])
+        
+        # 2. Update Questions Database
+        c.execute("UPDATE questions SET subject=?, chapter=?, correct_option=? WHERE id=?", 
+                  (new_sub, new_chap, new_key, r['question_id']))
+                  
+        # 3. Update Responses Database
+        c.execute("UPDATE responses SET category=?, score_awarded=?, is_correct=? WHERE id=?", 
+                  (new_cat, new_score, new_is_correct, r['rid']))
+                  
+        conn.commit()
+        st.success(f"Saved! New Score Computed: {new_score}")
+        time.sleep(0.8)
+        st.rerun()
         
     conn.close()
 
@@ -599,7 +667,6 @@ def analytics_dashboard():
         fig2 = px.pie(df[df['Category'] != 'Pending Review'], names='Category', title="Mistake Analysis (Tagged)", hole=0.4)
         st.plotly_chart(fig2, use_container_width=True)
 
-    # UPDATED: Clean Dot Plot (Strip Chart) for Time vs Chapter
     st.markdown("---")
     if not df['Chapter'].empty:
         df_time = df[df['Result'] != 'Skipped']
@@ -608,27 +675,47 @@ def analytics_dashboard():
                             title="Time Taken per Question (Seconds)",
                             labels={'time_taken_sec': 'Time Taken (Seconds)', 'Chapter': 'Chapter'})
             
-            # Make the dots slightly larger so they are easy to see
             fig3.update_traces(marker=dict(size=8, opacity=0.7, color="#4A90E2"))
             st.plotly_chart(fig3, use_container_width=True)
 
 def render_parent_stats():
     st.title("🌐 All Time Analytics")
     
-    # Use the dynamic path function instead of the old constant
     user_parent_path = get_parent_db_path()
     
+    # --- NEW: PARENT DB BACKUP & RESTORE ---
+    with st.expander("💾 Backup & Restore All-Time Analytics"):
+        st.info("Streamlit Cloud resets occasionally. Download your Parent DB to keep your progress safe, and upload it here when you return!")
+        
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            if os.path.exists(user_parent_path):
+                with open(user_parent_path, "rb") as f:
+                    parent_bytes = f.read()
+                st.download_button(label="⬇️ Download Parent DB", data=parent_bytes, file_name="parent_testor.db", mime="application/octet-stream", use_container_width=True)
+            else:
+                st.button("⬇️ Download Parent DB", disabled=True, use_container_width=True)
+        
+        with pc2:
+            uploaded_parent = st.file_uploader("Upload Parent DB", type=['db'], label_visibility="collapsed")
+            if uploaded_parent is not None:
+                with open(user_parent_path, "wb") as f:
+                    f.write(uploaded_parent.getbuffer())
+                st.success("Parent DB Restored!")
+                time.sleep(1)
+                st.rerun()
+
     with st.expander("⚠️ Danger Zone: Clear All Time Analytics"):
         if st.button("Delete Parent Database"):
             if os.path.exists(user_parent_path):
                 os.remove(user_parent_path)
-                st.success("Wiped clean!")
+                st.success("All Time Analytics wiped clean!")
                 time.sleep(1)
                 st.rerun()
-    
-    if not os.path.exists(user_parent_path): 
-        st.info("No Data. 'Aclaim' some results first!")
-        return
+            else:
+                st.info("Parent Database is already empty.")
+
+    if not os.path.exists(user_parent_path): st.info("No Data. 'Aclaim' some results first!"); return
     conn = sqlite3.connect(user_parent_path)
     df = pd.read_sql("SELECT * FROM chapter_stats", conn)
     conn.close()
