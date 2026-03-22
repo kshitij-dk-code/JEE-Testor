@@ -264,7 +264,7 @@ def submit_test_initial():
 # --- CHUNK 5: EXAM INTERFACES ---
 def render_login():
     init_auth()
-    st.markdown('<p class="testor-title">JEE Testor</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Sign in to your personal workspace.</p>', unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns([1, 1.5, 1])
@@ -306,7 +306,7 @@ def render_login():
                 else: st.warning("Please fill both fields.")
 
 def render_home():
-    st.markdown('<p class="testor-title">JEE Testor</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Your personal simulator and tutor.</p>', unsafe_allow_html=True)
     
     papers = get_available_papers()
@@ -368,9 +368,28 @@ def render_instructions():
         return
 
     st.subheader(f"Total Questions: {len(df)}")
-    breakdown = df['question_type'].value_counts().reset_index()
-    breakdown.columns = ['Question Type', 'Count']
-    st.dataframe(breakdown, hide_index=True, use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    subjects = df['subject'].unique()
+    cols = st.columns(len(subjects) if len(subjects) > 0 else 1)
+    
+    for i, subj in enumerate(subjects):
+        subj_df = df[df['subject'] == subj]
+        breakdown = subj_df['question_type'].value_counts()
+        
+        with cols[i % len(cols)]:
+            html_card = f"""
+            <div style="background: rgba(128, 130, 137, 0.1); border: 1px solid rgba(128, 130, 137, 0.2); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <h4 style="margin-top: 0; border-bottom: 1px solid rgba(128, 130, 137, 0.2); padding-bottom: 8px;">{subj}</h4>
+                <div style='display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 12px;'>
+                    <span>Total</span> <span style="color: #4A90E2;">{len(subj_df)}</span>
+                </div>
+            """
+            for q_type, count in breakdown.items():
+                html_card += f"<div style='display: flex; justify-content: space-between; font-size: 0.95rem; margin-bottom: 4px;'><span style='color: #aaa;'>{q_type}</span> <span>{count}</span></div>"
+            
+            html_card += "</div>"
+            st.markdown(html_card, unsafe_allow_html=True)
     
     st.markdown("---")
     st.subheader("⏱️ Exam Settings")
@@ -383,14 +402,17 @@ def render_instructions():
         st.info("Take as long as you need. Your per-question time will still be tracked.")
     
     st.markdown("---")
-    c1, c2 = st.columns([1, 5])
-    if c1.button("Start Test", type="primary"):
-        st.session_state.is_timed = is_timed
-        st.session_state.test_duration_secs = duration_mins * 60 if is_timed else 0
-        if prepare_test(st.session_state.selected_paper): 
-            change_phase('test')
-            
-    if c2.button("Cancel"): change_phase('home')
+    
+    # --- SWAPPED BUTTONS ---
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    with c2:
+        if st.button("Cancel", use_container_width=True): change_phase('home')
+    with c3:
+        if st.button("Start Test", type="primary", use_container_width=True):
+            st.session_state.is_timed = is_timed
+            st.session_state.test_duration_secs = duration_mins * 60 if is_timed else 0
+            if prepare_test(st.session_state.selected_paper): 
+                change_phase('test')
 
 # --- TIMER LOGIC SEPARATED FROM VISUALS ---
 def check_timer_logic():
@@ -401,38 +423,48 @@ def check_timer_logic():
     return False
 
 def render_live_timer():
+    # Python calculates exact elapsed time, avoiding browser clock drift entirely
+    elapsed = time.time() - st.session_state.test_start_time_global
+    
     if st.session_state.is_timed:
-        end_time_js = int((st.session_state.test_start_time_global + st.session_state.test_duration_secs) * 1000)
+        rem = max(0, st.session_state.test_duration_secs - elapsed)
         html = f"""
         <style>
             body {{ margin: 0; font-family: sans-serif; }}
             .timer {{ font-size: 1rem; font-weight: bold; color: #d32f2f; float: right; background: #ffebee; padding: 4px 12px; border-radius: 20px; border: 1px solid #d32f2f; }}
         </style>
-        <div class="timer" id="clock">⏳ --:--</div>
+        <div class="timer" id="clock">⏳ Loading...</div>
         <script>
-            var end = {end_time_js};
-            setInterval(function() {{
-                var dist = end - new Date().getTime();
-                if(dist < 0) {{ document.getElementById("clock").innerHTML = "⚠️ TIME UP!"; return; }}
-                var h = Math.floor(dist / 3600000), m = Math.floor((dist % 3600000)/60000), s = Math.floor((dist % 60000)/1000);
+            var rem = {int(rem)};
+            var x = setInterval(function() {{
+                if(rem <= 0) {{ 
+                    clearInterval(x);
+                    document.getElementById("clock").innerHTML = "⚠️ TIME UP!"; 
+                    return; 
+                }}
+                var h = Math.floor(rem / 3600);
+                var m = Math.floor((rem % 3600) / 60);
+                var s = Math.floor(rem % 60);
                 document.getElementById("clock").innerHTML = "⏳ " + (h>0?h+":":"") + (m<10?"0":"")+m + ":" + (s<10?"0":"")+s;
+                rem--;
             }}, 1000);
         </script>
         """
     else:
-        start_time_js = int(st.session_state.test_start_time_global * 1000)
         html = f"""
         <style>
             body {{ margin: 0; font-family: sans-serif; }}
             .timer {{ font-size: 1rem; font-weight: bold; color: #1976d2; float: right; background: #e3f2fd; padding: 4px 12px; border-radius: 20px; border: 1px solid #1976d2; }}
         </style>
-        <div class="timer" id="clock">⏱️ --:--</div>
+        <div class="timer" id="clock">⏱️ Loading...</div>
         <script>
-            var start = {start_time_js};
+            var elapsed = {int(elapsed)};
             setInterval(function() {{
-                var dist = new Date().getTime() - start;
-                var h = Math.floor(dist / 3600000), m = Math.floor((dist % 3600000)/60000), s = Math.floor((dist % 60000)/1000);
+                var h = Math.floor(elapsed / 3600);
+                var m = Math.floor((elapsed % 3600) / 60);
+                var s = Math.floor(elapsed % 60);
                 document.getElementById("clock").innerHTML = "⏱️ " + (h>0?h+":":"") + (m<10?"0":"")+m + ":" + (s<10?"0":"")+s;
+                elapsed++;
             }}, 1000);
         </script>
         """
@@ -440,35 +472,60 @@ def render_live_timer():
     components.html(html, height=40)
 
 def render_summary():
-    if check_timer_logic():
-        st.warning("Time's up! Auto-submitting..."); update_timer(); submit_test_initial(); return
+    st.markdown("""
+        <style>
+            header[data-testid="stHeader"] { display: none !important; }
+            .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 95% !important; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col_empty, col_timer = st.columns([4, 1.5])
+    with col_timer:
+        render_live_timer()
+
+    time_is_up = check_timer_logic()
     
-    st.title("📊 Test Summary")
-    st.info("Please review your status before making the final submission.")
-    
-    counts = {"answered": 0, "ans_review": 0, "review": 0, "not_answered": 0, "not_visited": 0}
-    for v in st.session_state.status.values(): counts[v] = counts.get(v, 0) + 1
-        
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(f"**🟢 Attempted (Counted for Marks):** {counts['answered']}")
-        st.markdown(f"**🟣✅ Marked for Review & Attempted:** {counts['ans_review']}")
-        st.markdown(f"**🟣 Marked for Review:** {counts['review']}")
+    c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown(f"**🔴 Skipped:** {counts['not_answered']}")
-        st.markdown(f"**⚪ Not Visited:** {counts['not_visited']}")
+        st.markdown("<h1 style='text-align: center;'>📊 Test Summary</h1>", unsafe_allow_html=True)
         
-    st.markdown("---")
-    sc1, sc2 = st.columns([1, 5])
-    if sc1.button("⬅️ Back to Test"): change_phase('test')
-    if sc2.button("Final Submit", type="primary"): submit_test_initial()
+        if time_is_up:
+            st.error("⚠️ Time is up! You can no longer modify your answers. Please submit your test.")
+        else:
+            st.info("Please review your status before making the final submission.")
+        
+        counts = {"answered": 0, "ans_review": 0, "review": 0, "not_answered": 0, "not_visited": 0}
+        for v in st.session_state.status.values(): counts[v] = counts.get(v, 0) + 1
+        
+        # --- UPGRADED: Dark-theme friendly transparent card ---
+        st.markdown(f"""
+        <div style="max-width: 450px; margin: 0 auto; background: rgba(128, 130, 137, 0.1); border: 1px solid rgba(128, 130, 137, 0.2); border-radius: 10px; padding: 20px;">
+            <h4 style="text-align:center; border-bottom: 1px solid rgba(128,130,137,0.2); padding-bottom: 10px; margin-bottom: 15px;">Question Status</h4>
+            <p style="font-size: 1.1rem; margin-bottom: 8px;"><strong>🟢 Attempted:</strong> <span style="float:right; font-weight:bold;">{counts['answered']}</span></p>
+            <p style="font-size: 1.1rem; margin-bottom: 8px;"><strong>🟣✅ Marked & Attempted:</strong> <span style="float:right; font-weight:bold;">{counts['ans_review']}</span></p>
+            <p style="font-size: 1.1rem; margin-bottom: 8px;"><strong>🟣 Marked for Review:</strong> <span style="float:right; font-weight:bold;">{counts['review']}</span></p>
+            <p style="font-size: 1.1rem; margin-bottom: 8px;"><strong>🔴 Skipped:</strong> <span style="float:right; font-weight:bold;">{counts['not_answered']}</span></p>
+            <p style="font-size: 1.1rem; margin-bottom: 8px;"><strong>⚪ Not Visited:</strong> <span style="float:right; font-weight:bold;">{counts['not_visited']}</span></p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        bc1, bc2, bc3 = st.columns([1, 1.5, 1])
+        with bc2:
+            if not time_is_up:
+                if st.button("⬅️ Back to Test", use_container_width=True): change_phase('test')
+            
+            if st.button("✅ Final Submit", type="primary", use_container_width=True): 
+                submit_test_initial()
 
 def render_test_interface():
-    # 1. Trigger Auto-Submit if time is up
+    # THE FIX: If time is up, redirect to summary instead of force-submitting
     if check_timer_logic():
-        st.warning("Time's up! Auto-submitting..."); update_timer(); submit_test_initial(); return
+        update_timer() 
+        change_phase('summary')
+        return
 
-    # 2. Inject Fullscreen CSS & Image Autoscaling
     st.markdown("""
         <style>
             header[data-testid="stHeader"] { display: none !important; }
@@ -484,7 +541,6 @@ def render_test_interface():
     current_subj = df_questions.loc[df_questions['id'] == current_q_id, 'subject'].values[0]
 
     with col_p:
-        # The new compact timer renders exactly here, at the top right
         render_live_timer()
         
         st.markdown("#### Question Palette")
@@ -523,7 +579,6 @@ def render_test_interface():
         q_id = st.session_state.q_map[st.session_state.current_idx]
         q = df_questions[df_questions['id'] == q_id].iloc[0]
         
-        # Duplicate text removed, title formatting cleaned up
         st.markdown(f'<div class="jee-card"><div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 10px;"><h3>Q{st.session_state.current_idx+1} <span style="font-size: 1rem; color: #666;">({q["question_type"]})</span></h3><span style="color:gray; font-size: 0.9rem;">DB Ref: #{q_id}</span></div></div>', unsafe_allow_html=True)
         
         if q['question_img']: st.image(q['question_img'], use_container_width=True)
@@ -571,14 +626,31 @@ def render_test_interface():
 # --- CHUNK 5.5: EDITORS, ANALYTICS & PARENT DB ---
 def question_editor():
     st.header("🛠️ Pre-Test Editor")
-    if not st.session_state.selected_paper: st.warning("Select a paper on Home screen."); return
-    conn = sqlite3.connect(st.session_state.selected_paper)
+    
+    # --- UPGRADED: Paper selector built directly into the editor ---
+    papers = get_available_papers()
+    if not papers: 
+        st.warning("No question papers found in your workspace.")
+        return
+        
+    paper_names = {p: os.path.basename(p).replace('.db', '') for p in papers}
+    
+    # Default to the currently selected paper if one exists, otherwise default to the first one
+    default_idx = 0
+    if st.session_state.selected_paper in papers:
+        default_idx = papers.index(st.session_state.selected_paper)
+        
+    target_db = st.selectbox("Select Paper to Edit:", papers, format_func=lambda x: paper_names[x], index=default_idx)
+    st.markdown("---")
+    
+    conn = sqlite3.connect(target_db)
     df = pd.read_sql("SELECT id, subject, chapter, question_type, marks_pos, marks_neg, correct_option FROM questions", conn)
     edited = st.data_editor(df, use_container_width=True, hide_index=True,
         column_config={
             "subject": st.column_config.SelectboxColumn("Subject", options=["Physics", "Chemistry", "Mathematics", "Uncategorized"], required=True),
             "question_type": st.column_config.SelectboxColumn("Type", options=["Single Correct", "Multi-Correct", "Paragraph", "Integer", "Numerical"], required=True)
         })
+        
     if st.button("Save Changes", type="primary"):
         c = conn.cursor()
         for _, r in edited.iterrows():
@@ -588,10 +660,27 @@ def question_editor():
     conn.close()
 
 def render_review_browser():
+    # Inject CSS for correct image scaling and centered layout
+    st.markdown("""
+        <style>
+            /* Centers the entire Review Interface */
+            .block-container { max-width: 90% !important; margin: 0 auto !important; }
+
+            /* Fixes Image scaling for the questions and options */
+            .jee-card img, [data-testid="stImage"] img {
+                max-height: 35vh !important; /* Shared limit, 35% of screen height */
+                object-fit: contain !important; /* Preserves ratio, no distortion */
+                width: auto !important; /* Allows dynamic width */
+                max-width: 100% !important; /* Won't stretch wider than container */
+                display: block; /* For centering */
+                margin: auto; /* Centers horizontally */
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     st.title("📖 Paper Review & Live Editor")
-    st.info("Categorize mistakes or fix database errors. Changes to the Official Key will instantly re-evaluate your score!")
-    
     if st.button("⬅️ Back to Analytics"): change_phase('analytics')
+    st.markdown("---")
     
     conn = sqlite3.connect(st.session_state.selected_paper)
     df = pd.read_sql("SELECT r.id as rid, r.user_answer, r.is_correct, r.score_awarded, r.time_taken_sec, r.category, q.* FROM responses r JOIN questions q ON r.question_id = q.id", conn)
@@ -600,71 +689,83 @@ def render_review_browser():
         st.warning("No attempts found for this paper."); conn.close(); return
         
     if 'rev_idx' not in st.session_state: st.session_state.rev_idx = 0
-    
-    c1, c2, c3 = st.columns([1, 2, 1])
-    if c1.button("Previous Question") and st.session_state.rev_idx > 0:
-        st.session_state.rev_idx -= 1; st.rerun()
-    if c3.button("Next Question") and st.session_state.rev_idx < len(df) - 1:
-        st.session_state.rev_idx += 1; st.rerun()
 
     r = df.iloc[st.session_state.rev_idx]
-    
     status_col = "#28a745" if r['is_correct'] else "#dc3545"
     if not r['user_answer']: status_col = "#6c757d"
     
-    st.markdown(f"""
-    <div style="background-color: {status_col}; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
-        <strong>Q{st.session_state.rev_idx + 1} ({r['question_type']})</strong> | 
-        Score: {r['score_awarded']} | Time Spent: {r['time_taken_sec']}s
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f'<div class="jee-card"></div>', unsafe_allow_html=True)
-    if r['question_img']: st.image(r['question_img'])
-    
-    if any([r['option_a_img'], r['option_b_img']]):
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if r['option_a_img']: st.image(r['option_a_img'], caption="A")
-            if r['option_c_img']: st.image(r['option_c_img'], caption="C")
-        with col_b:
-            if r['option_b_img']: st.image(r['option_b_img'], caption="B")
-            if r['option_d_img']: st.image(r['option_d_img'], caption="D")
-    
-    st.metric("Your Answer", r['user_answer'] if r['user_answer'] else "Skipped")
-    
-    st.markdown("---")
-    st.write("### 🛠️ Live Adjustments")
-    
-    c_sub, c_chap, c_key, c_tag = st.columns(4)
-    
-    sub_opts = ["Physics", "Chemistry", "Mathematics", "Uncategorized"]
-    curr_sub_idx = sub_opts.index(r['subject']) if r['subject'] in sub_opts else 3
-    new_sub = c_sub.selectbox("Subject", sub_opts, index=curr_sub_idx, key=f"rev_sub_{r['rid']}")
-    
-    new_chap = c_chap.text_input("Chapter", value=r['chapter'], key=f"rev_chap_{r['rid']}")
-    new_key = c_key.text_input("Official Key", value=r['correct_option'], key=f"rev_key_{r['rid']}")
-    
-    cat_opts = ["Pending Review", "Perfect", "Silly Mistake", "Conceptual Error", "Time Pressure", "Skipped", "Guessed"]
-    curr_cat = r['category'] if r['category'] in cat_opts else "Pending Review"
-    new_cat = c_tag.selectbox("Mistake Type", cat_opts, index=cat_opts.index(curr_cat), key=f"rev_cat_{r['rid']}")
-    
-    if st.button("Save & Re-Evaluate", type="primary"):
-        c = conn.cursor()
-        new_score, new_is_correct = calculate_score(r['question_type'], r['user_answer'], new_key, r['marks_pos'], r['marks_neg'])
-        
-        c.execute("UPDATE questions SET subject=?, chapter=?, correct_option=? WHERE id=?", 
-                  (new_sub, new_chap, new_key, r['question_id']))
-        c.execute("UPDATE responses SET category=?, score_awarded=?, is_correct=? WHERE id=?", 
-                  (new_cat, new_score, new_is_correct, r['rid']))
-                  
-        conn.commit()
-        st.success(f"Saved! New Score Computed: {new_score}")
-        time.sleep(0.8)
-        st.rerun()
-        
-    conn.close()
+    # --- Two-Column Layout (Question vs. Control Panel) ---
+    col_q, col_ctrl = st.columns([2.5, 1.5])
 
+    # RIGHT PANEL: Control Panel (Navigation & Editor)
+    with col_ctrl:
+        # 1. Navigation Buttons
+        nav_c1, nav_c2 = st.columns(2)
+        if nav_c1.button("⬅️ Previous", use_container_width=True) and st.session_state.rev_idx > 0:
+            st.session_state.rev_idx -= 1; st.rerun()
+        if nav_c2.button("Next ➡️", use_container_width=True) and st.session_state.rev_idx < len(df) - 1:
+            st.session_state.rev_idx += 1; st.rerun()
+            
+        # 2. Status Banner
+        st.markdown(f"""
+        <div style="background-color: {status_col}; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; margin-top: 5px; text-align: center;">
+            <strong>Q{st.session_state.rev_idx + 1} ({r['question_type']})</strong><br>
+            Score: {r['score_awarded']} | Time Spent: {r['time_taken_sec']}s
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.metric("Your Answer", r['user_answer'] if r['user_answer'] else "Skipped")
+        st.markdown("---")
+        
+        # 3. Stacked Live Editor
+        st.write("### 🛠️ Live Adjustments")
+        
+        sub_opts = ["Physics", "Chemistry", "Mathematics", "Uncategorized"]
+        curr_sub_idx = sub_opts.index(r['subject']) if r['subject'] in sub_opts else 3
+        new_sub = st.selectbox("Subject", sub_opts, index=curr_sub_idx, key=f"rev_sub_{r['rid']}")
+        
+        new_chap = st.text_input("Chapter", value=r['chapter'], key=f"rev_chap_{r['rid']}")
+        new_key = st.text_input("Official Key", value=r['correct_option'], key=f"rev_key_{r['rid']}")
+        
+        cat_opts = ["Pending Review", "Perfect", "Silly Mistake", "Conceptual Error", "Time Pressure", "Skipped", "Guessed"]
+        curr_cat = r['category'] if r['category'] in cat_opts else "Pending Review"
+        new_cat = st.selectbox("Mistake Type", cat_opts, index=cat_opts.index(curr_cat), key=f"rev_cat_{r['rid']}")
+        
+        if st.button("Save & Re-Evaluate", type="primary", use_container_width=True):
+            c = conn.cursor()
+            new_score, new_is_correct = calculate_score(r['question_type'], r['user_answer'], new_key, r['marks_pos'], r['marks_neg'])
+            
+            c.execute("UPDATE questions SET subject=?, chapter=?, correct_option=? WHERE id=?", 
+                      (new_sub, new_chap, new_key, r['question_id']))
+            c.execute("UPDATE responses SET category=?, score_awarded=?, is_correct=? WHERE id=?", 
+                      (new_cat, new_score, new_is_correct, r['rid']))
+                      
+            conn.commit()
+            st.success(f"Saved! New Score Computed: {new_score}")
+            time.sleep(0.8)
+            st.rerun()
+
+    # LEFT PANEL: Question & Options Display
+    with col_q:
+        # Standardize question display to remove duplicate text (just use the card class for layout)
+        st.markdown(f'<div class="jee-card"></div>', unsafe_allow_html=True)
+        
+        # Display Question Image
+        if r['question_img']: st.image(r['question_img'], use_container_width=True)
+        
+        # Display Options (supports horizontal layouts if DB images are split)
+        if any([r['option_a_img'], r['option_b_img']]):
+            st.markdown("<br>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                if r['option_a_img']: st.image(r['option_a_img'], caption="A", use_container_width=True)
+                if r['option_c_img']: st.image(r['option_c_img'], caption="C", use_container_width=True)
+            with c2:
+                if r['option_b_img']: st.image(r['option_b_img'], caption="B", use_container_width=True)
+                if r['option_d_img']: st.image(r['option_d_img'], caption="D", use_container_width=True)
+                
+    conn.close()
+    
 def analytics_dashboard():
     st.title("📊 Test Analytics")
     papers = get_available_papers()
