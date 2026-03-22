@@ -310,8 +310,46 @@ def render_home():
     st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Your personal simulator and tutor.</p>', unsafe_allow_html=True)
     
-    # --- WEB UPLOADER ---
-    with st.expander("📤 Upload Question Paper (.db)"):
+    papers = get_available_papers()
+    
+    if not papers: 
+        st.warning("No question papers found in your workspace. Please upload one below!")
+    else:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            paper_names = {p: os.path.basename(p).replace('.db', '') for p in papers}
+            selected = st.selectbox("Select Question Paper:", papers, format_func=lambda x: paper_names[x])
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # --- ACTION BUTTONS (Start, Download, Delete) ---
+            c_start, c_down = st.columns(2)
+            with c_start:
+                if st.button("Proceed to Instructions", type="primary", use_container_width=True):
+                    st.session_state.selected_paper = selected
+                    change_phase('instructions')
+                    
+            with c_down:
+                with open(selected, "rb") as f:
+                    db_bytes = f.read()
+                st.download_button(
+                    label="💾 Download Paper Data",
+                    data=db_bytes,
+                    file_name=os.path.basename(selected),
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+                
+            if st.button("🗑️ Delete Paper from Cloud", use_container_width=True):
+                os.remove(selected)
+                st.success("Deleted from server!")
+                time.sleep(1)
+                st.rerun()
+
+    st.markdown("---")
+    
+    # --- WEB UPLOADER (Moved to the bottom) ---
+    with st.expander("📤 Upload New Question Paper (.db)"):
         st.info("Drag and drop a .db paper file from your local PC to add it to your workspace.")
         uploaded_file = st.file_uploader("Upload Database File", type=['db'], label_visibility="collapsed")
         
@@ -320,45 +358,6 @@ def render_home():
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             st.success(f"Successfully uploaded: {uploaded_file.name}!")
-            time.sleep(1)
-            st.rerun()
-            
-    st.markdown("---")
-    
-    papers = get_available_papers()
-    if not papers: 
-        st.warning("No question papers found in your workspace. Upload one above!")
-        return
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        paper_names = {p: os.path.basename(p).replace('.db', '') for p in papers}
-        selected = st.selectbox("Select Question Paper:", papers, format_func=lambda x: paper_names[x])
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # --- ACTION BUTTONS (Start, Download, Delete) ---
-        c_start, c_down = st.columns(2)
-        with c_start:
-            if st.button("Proceed to Instructions", type="primary", use_container_width=True):
-                st.session_state.selected_paper = selected
-                change_phase('instructions')
-                
-        with c_down:
-            # Read the DB file into bytes for the download button
-            with open(selected, "rb") as f:
-                db_bytes = f.read()
-            st.download_button(
-                label="💾 Download Paper Data",
-                data=db_bytes,
-                file_name=os.path.basename(selected),
-                mime="application/octet-stream",
-                use_container_width=True
-            )
-            
-        if st.button("🗑️ Delete Paper from Cloud", use_container_width=True):
-            os.remove(selected)
-            st.success("Deleted from server!")
             time.sleep(1)
             st.rerun()
 
@@ -531,7 +530,7 @@ def question_editor():
     df = pd.read_sql("SELECT id, subject, chapter, question_type, marks_pos, marks_neg, correct_option FROM questions", conn)
     edited = st.data_editor(df, use_container_width=True, hide_index=True,
         column_config={
-            "subject": st.column_config.SelectboxColumn("Subject", options=["Physics", "Chemistry", "Mathematics"], required=True),
+            "subject": st.column_config.SelectboxColumn("Subject", options=["Physics", "Chemistry", "Mathematics", "Uncategorized"], required=True),
             "question_type": st.column_config.SelectboxColumn("Type", options=["Single Correct", "Multi-Correct", "Paragraph", "Integer", "Numerical"], required=True)
         })
     if st.button("Save Changes", type="primary"):
@@ -567,7 +566,6 @@ def render_review_browser():
     status_col = "#28a745" if r['is_correct'] else "#dc3545"
     if not r['user_answer']: status_col = "#6c757d"
     
-    # Render the dynamic score banner
     st.markdown(f"""
     <div style="background-color: {status_col}; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
         <strong>Q{st.session_state.rev_idx + 1} ({r['question_type']})</strong> | 
@@ -592,7 +590,6 @@ def render_review_browser():
     st.markdown("---")
     st.write("### 🛠️ Live Adjustments")
     
-    # The Integrated Post-Test Editor
     c_sub, c_chap, c_key, c_tag = st.columns(4)
     
     sub_opts = ["Physics", "Chemistry", "Mathematics", "Uncategorized"]
@@ -608,15 +605,10 @@ def render_review_browser():
     
     if st.button("Save & Re-Evaluate", type="primary"):
         c = conn.cursor()
-        
-        # 1. Recalculate the score using the new key
         new_score, new_is_correct = calculate_score(r['question_type'], r['user_answer'], new_key, r['marks_pos'], r['marks_neg'])
         
-        # 2. Update Questions Database
         c.execute("UPDATE questions SET subject=?, chapter=?, correct_option=? WHERE id=?", 
                   (new_sub, new_chap, new_key, r['question_id']))
-                  
-        # 3. Update Responses Database
         c.execute("UPDATE responses SET category=?, score_awarded=?, is_correct=? WHERE id=?", 
                   (new_cat, new_score, new_is_correct, r['rid']))
                   
@@ -633,7 +625,7 @@ def analytics_dashboard():
     if not papers: return
     target_db = st.selectbox("Select Paper to Analyze:", papers, format_func=lambda x: os.path.basename(x).replace('.db', ''))
     
-    if st.button("📖 Browse & Review Paper (Categorize Mistakes)", type="primary"):
+    if st.button("📖 Browse & Review Paper", type="primary"):
         st.session_state.selected_paper = target_db
         st.session_state.rev_idx = 0
         change_phase('review_paper')
@@ -645,45 +637,97 @@ def analytics_dashboard():
     st.markdown("---")
 
     conn = sqlite3.connect(target_db)
-    df = pd.read_sql("""SELECT r.category as Category, r.score_awarded as Score, r.time_taken_sec, r.is_correct, r.user_answer, q.chapter as Chapter 
+    df = pd.read_sql("""SELECT r.category as Category, r.score_awarded as Score, r.time_taken_sec, r.is_correct, r.user_answer, q.chapter as Chapter, q.subject as Subject 
                         FROM responses r JOIN questions q ON r.question_id = q.id WHERE r.manual_review_done = 1""", conn)
     conn.close()
     if df.empty: st.info("No attempts recorded for this paper yet."); return
 
     df['Result'] = df.apply(lambda row: 'Skipped' if not row['user_answer'] else ('Correct' if row['is_correct'] else 'Incorrect'), axis=1)
 
+    # --- TOP METRICS ---
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Score", df['Score'].sum())
     m2.metric("Attempted", len(df[df['Result'] != 'Skipped']))
     m3.metric("Correct", len(df[df['Result'] == 'Correct']))
     m4.metric("Avg Time / Q", f"{df['time_taken_sec'].mean():.1f}s")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        fig1 = px.pie(df, names='Result', title="Accuracy Breakdown", hole=0.4, 
+    # --- NEW: SUBJECT-WISE CARDS ---
+    st.markdown("<br>", unsafe_allow_html=True)
+    subjects_in_paper = [s for s in ["Physics", "Chemistry", "Mathematics"] if s in df['Subject'].values]
+    if not subjects_in_paper: subjects_in_paper = df['Subject'].dropna().unique().tolist()
+    
+    subj_cols = st.columns(len(subjects_in_paper) if len(subjects_in_paper) > 0 else 1)
+    
+    for i, subj in enumerate(subjects_in_paper):
+        s_df = df[df['Subject'] == subj]
+        with subj_cols[i]:
+            st.info(f"**{subj}**\n\n"
+                    f"Score: **{s_df['Score'].sum()}**\n\n"
+                    f"Attempted: **{len(s_df[s_df['Result'] != 'Skipped'])}**\n\n"
+                    f"Correct: **{len(s_df[s_df['Result'] == 'Correct'])}** | "
+                    f"Incorrect: **{len(s_df[s_df['Result'] == 'Incorrect'])}**")
+
+    # --- PIE CHARTS ---
+    st.markdown("---")
+    c_pie1, c_pie2, c_pie3 = st.columns([1, 2, 1])
+    with c_pie2:
+        fig1 = px.pie(df, names='Result', title="Overall Accuracy", hole=0.4, 
                       color='Result', color_discrete_map={'Correct':'#28a745', 'Incorrect':'#dc3545', 'Skipped':'#6c757d'})
         st.plotly_chart(fig1, use_container_width=True)
-    with c2:
-        fig2 = px.pie(df[df['Category'] != 'Pending Review'], names='Category', title="Mistake Analysis (Tagged)", hole=0.4)
-        st.plotly_chart(fig2, use_container_width=True)
 
     st.markdown("---")
-    if not df['Chapter'].empty:
-        df_time = df[df['Result'] != 'Skipped']
-        if not df_time.empty:
-            fig3 = px.strip(df_time, x='Chapter', y='time_taken_sec', 
-                            title="Time Taken per Question (Seconds)",
-                            labels={'time_taken_sec': 'Time Taken (Seconds)', 'Chapter': 'Chapter'})
-            
-            fig3.update_traces(marker=dict(size=8, opacity=0.7, color="#4A90E2"))
-            st.plotly_chart(fig3, use_container_width=True)
+    st.subheader("📚 Subject & Chapter Breakdown")
+    
+    subjects_list = ["All Subjects"] + sorted(df['Subject'].dropna().unique().tolist())
+    selected_subj = st.selectbox("Filter Data by Subject:", subjects_list)
+    
+    if selected_subj != "All Subjects":
+        filtered_df = df[df['Subject'] == selected_subj]
+    else:
+        filtered_df = df
+        
+    if filtered_df.empty:
+        st.info(f"No data available for {selected_subj}.")
+        return
+
+    # --- REORDERED: TIME GRAPH ABOVE TABLE ---
+    df_time = filtered_df[filtered_df['Result'] != 'Skipped']
+    if not df_time.empty:
+        fig3 = px.strip(df_time, x='Chapter', y='time_taken_sec', 
+                        title=f"Time Taken per Question ({selected_subj})",
+                        labels={'time_taken_sec': 'Time Taken (Seconds)', 'Chapter': 'Chapter'},
+                        color='Result', color_discrete_map={'Correct':'#28a745', 'Incorrect':'#dc3545'})
+        
+        fig3.update_traces(marker=dict(size=8, opacity=0.8))
+        st.plotly_chart(fig3, use_container_width=True)
+    else:
+        st.info("No attempted questions to display time data.")
+
+    # --- REORDERED: CHAPTER-WISE TABLE BELOW GRAPH ---
+    st.markdown("<br>", unsafe_allow_html=True)
+    filtered_df['is_corr_int'] = filtered_df['is_correct'].fillna(0).astype(int)
+    filtered_df['is_att_int'] = filtered_df['Result'].apply(lambda x: 1 if x != 'Skipped' else 0)
+    
+    chap_stats = filtered_df.groupby('Chapter').agg(
+        total_qs=('Category', 'count'),
+        attempted=('is_att_int', 'sum'),
+        correct=('is_corr_int', 'sum')
+    ).reset_index()
+    
+    chap_stats['incorrect'] = chap_stats['attempted'] - chap_stats['correct']
+    
+    display_table = chap_stats[['Chapter', 'total_qs', 'attempted', 'correct', 'incorrect']]
+    display_table.columns = ['Chapter', 'Total Questions', 'Attempted', 'Correct', 'Incorrect']
+    
+    st.markdown(f"**Performance Metrics: {selected_subj}**")
+    st.dataframe(display_table, use_container_width=True, hide_index=True)
+
 
 def render_parent_stats():
     st.title("🌐 All Time Analytics")
     
     user_parent_path = get_parent_db_path()
     
-    # --- NEW: PARENT DB BACKUP & RESTORE ---
     with st.expander("💾 Backup & Restore All-Time Analytics"):
         st.info("Streamlit Cloud resets occasionally. Download your Parent DB to keep your progress safe, and upload it here when you return!")
         
