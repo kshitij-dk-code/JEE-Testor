@@ -262,10 +262,9 @@ def submit_test_initial():
 
 
 # --- CHUNK 5: EXAM INTERFACES ---
-
 def render_login():
     init_auth()
-    st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="testor-title">JEE Testor</p>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Sign in to your personal workspace.</p>', unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns([1, 1.5, 1])
@@ -307,7 +306,7 @@ def render_login():
                 else: st.warning("Please fill both fields.")
 
 def render_home():
-    st.markdown('<h1 class="testor-title">JEE Testor</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="testor-title">JEE Testor</p>', unsafe_allow_html=True)
     st.markdown('<p class="testor-sub">Your personal simulator and tutor.</p>', unsafe_allow_html=True)
     
     papers = get_available_papers()
@@ -322,7 +321,6 @@ def render_home():
             
             st.markdown("<br>", unsafe_allow_html=True)
             
-            # --- ACTION BUTTONS (Start, Download, Delete) ---
             c_start, c_down = st.columns(2)
             with c_start:
                 if st.button("Proceed to Instructions", type="primary", use_container_width=True):
@@ -348,7 +346,6 @@ def render_home():
 
     st.markdown("---")
     
-    # --- WEB UPLOADER (Moved to the bottom) ---
     with st.expander("📤 Upload New Question Paper (.db)"):
         st.info("Drag and drop a .db paper file from your local PC to add it to your workspace.")
         uploaded_file = st.file_uploader("Upload Database File", type=['db'], label_visibility="collapsed")
@@ -395,22 +392,55 @@ def render_instructions():
             
     if c2.button("Cancel"): change_phase('home')
 
-def check_timer():
-    elapsed = time.time() - st.session_state.test_start_time_global
-    
+# --- TIMER LOGIC SEPARATED FROM VISUALS ---
+def check_timer_logic():
     if st.session_state.is_timed:
-        rem = st.session_state.test_duration_secs - elapsed
-        if rem <= 0: return True 
-        mins, secs = divmod(int(rem), 60)
-        st.markdown(f"### ⏳ Time Left: **{mins:02d}:{secs:02d}**")
-        return False
+        elapsed = time.time() - st.session_state.test_start_time_global
+        if st.session_state.test_duration_secs - elapsed <= 0:
+            return True
+    return False
+
+def render_live_timer():
+    if st.session_state.is_timed:
+        end_time_js = int((st.session_state.test_start_time_global + st.session_state.test_duration_secs) * 1000)
+        html = f"""
+        <style>
+            body {{ margin: 0; font-family: sans-serif; }}
+            .timer {{ font-size: 1rem; font-weight: bold; color: #d32f2f; float: right; background: #ffebee; padding: 4px 12px; border-radius: 20px; border: 1px solid #d32f2f; }}
+        </style>
+        <div class="timer" id="clock">⏳ --:--</div>
+        <script>
+            var end = {end_time_js};
+            setInterval(function() {{
+                var dist = end - new Date().getTime();
+                if(dist < 0) {{ document.getElementById("clock").innerHTML = "⚠️ TIME UP!"; return; }}
+                var h = Math.floor(dist / 3600000), m = Math.floor((dist % 3600000)/60000), s = Math.floor((dist % 60000)/1000);
+                document.getElementById("clock").innerHTML = "⏳ " + (h>0?h+":":"") + (m<10?"0":"")+m + ":" + (s<10?"0":"")+s;
+            }}, 1000);
+        </script>
+        """
     else:
-        mins, secs = divmod(int(elapsed), 60)
-        st.markdown(f"### ⏱️ Time Elapsed: **{mins:02d}:{secs:02d}**")
-        return False
+        start_time_js = int(st.session_state.test_start_time_global * 1000)
+        html = f"""
+        <style>
+            body {{ margin: 0; font-family: sans-serif; }}
+            .timer {{ font-size: 1rem; font-weight: bold; color: #1976d2; float: right; background: #e3f2fd; padding: 4px 12px; border-radius: 20px; border: 1px solid #1976d2; }}
+        </style>
+        <div class="timer" id="clock">⏱️ --:--</div>
+        <script>
+            var start = {start_time_js};
+            setInterval(function() {{
+                var dist = new Date().getTime() - start;
+                var h = Math.floor(dist / 3600000), m = Math.floor((dist % 3600000)/60000), s = Math.floor((dist % 60000)/1000);
+                document.getElementById("clock").innerHTML = "⏱️ " + (h>0?h+":":"") + (m<10?"0":"")+m + ":" + (s<10?"0":"")+s;
+            }}, 1000);
+        </script>
+        """
+    import streamlit.components.v1 as components
+    components.html(html, height=40)
 
 def render_summary():
-    if check_timer():
+    if check_timer_logic():
         st.warning("Time's up! Auto-submitting..."); update_timer(); submit_test_initial(); return
     
     st.title("📊 Test Summary")
@@ -434,8 +464,18 @@ def render_summary():
     if sc2.button("Final Submit", type="primary"): submit_test_initial()
 
 def render_test_interface():
-    if check_timer():
+    # 1. Trigger Auto-Submit if time is up
+    if check_timer_logic():
         st.warning("Time's up! Auto-submitting..."); update_timer(); submit_test_initial(); return
+
+    # 2. Inject Fullscreen CSS & Image Autoscaling
+    st.markdown("""
+        <style>
+            header[data-testid="stHeader"] { display: none !important; }
+            .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 95% !important; }
+            .jee-card img, [data-testid="stImage"] img { max-height: 35vh; object-fit: contain; width: auto !important; max-width: 100%; }
+        </style>
+    """, unsafe_allow_html=True)
 
     df_questions = get_questions(st.session_state.selected_paper)
     col_q, col_p = st.columns([3.5, 1.5])
@@ -444,6 +484,9 @@ def render_test_interface():
     current_subj = df_questions.loc[df_questions['id'] == current_q_id, 'subject'].values[0]
 
     with col_p:
+        # The new compact timer renders exactly here, at the top right
+        render_live_timer()
+        
         st.markdown("#### Question Palette")
         if st.button("SUBMIT TEST", type="primary", use_container_width=True):
             update_timer(); mark_visited(); change_phase('summary')
@@ -479,17 +522,20 @@ def render_test_interface():
     with col_q:
         q_id = st.session_state.q_map[st.session_state.current_idx]
         q = df_questions[df_questions['id'] == q_id].iloc[0]
-        st.markdown(f'<div class="jee-card"><div style="display:flex; justify-content:space-between;"><h3>Q{st.session_state.current_idx+1} ({q["question_type"]})</h3><span style="color:gray;">DB Ref: #{q_id}</span></div><p>{q["question_text"]}</p></div>', unsafe_allow_html=True)
-        if q['question_img']: st.image(q['question_img'])
+        
+        # Duplicate text removed, title formatting cleaned up
+        st.markdown(f'<div class="jee-card"><div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 10px;"><h3>Q{st.session_state.current_idx+1} <span style="font-size: 1rem; color: #666;">({q["question_type"]})</span></h3><span style="color:gray; font-size: 0.9rem;">DB Ref: #{q_id}</span></div></div>', unsafe_allow_html=True)
+        
+        if q['question_img']: st.image(q['question_img'], use_container_width=True)
         
         if any([q['option_a_img'], q['option_b_img']]):
             c1, c2 = st.columns(2)
             with c1:
-                if q['option_a_img']: st.image(q['option_a_img'], caption="A")
-                if q['option_c_img']: st.image(q['option_c_img'], caption="C")
+                if q['option_a_img']: st.image(q['option_a_img'], caption="A", use_container_width=True)
+                if q['option_c_img']: st.image(q['option_c_img'], caption="C", use_container_width=True)
             with c2:
-                if q['option_b_img']: st.image(q['option_b_img'], caption="B")
-                if q['option_d_img']: st.image(q['option_d_img'], caption="D")
+                if q['option_b_img']: st.image(q['option_b_img'], caption="B", use_container_width=True)
+                if q['option_d_img']: st.image(q['option_d_img'], caption="D", use_container_width=True)
 
         ans = st.session_state.responses.get(q_id, "")
         if q['question_type'] == "Multi-Correct":
@@ -573,7 +619,7 @@ def render_review_browser():
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown(f'<div class="jee-card"><p>{r["question_text"]}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="jee-card"></div>', unsafe_allow_html=True)
     if r['question_img']: st.image(r['question_img'])
     
     if any([r['option_a_img'], r['option_b_img']]):
