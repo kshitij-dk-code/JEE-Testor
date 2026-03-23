@@ -736,7 +736,7 @@ def render_review_browser():
             new_score, new_is_correct = calculate_score(r['question_type'], r['user_answer'], new_key, r['marks_pos'], r['marks_neg'])
             
             c.execute("UPDATE questions SET subject=?, chapter=?, correct_option=? WHERE id=?", 
-                      (new_sub, new_chap, new_key, r['question_id']))
+                      (new_sub, new_chap, new_key, r['id']))
             c.execute("UPDATE responses SET category=?, score_awarded=?, is_correct=? WHERE id=?", 
                       (new_cat, new_score, new_is_correct, r['rid']))
                       
